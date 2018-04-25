@@ -15,7 +15,19 @@
 
 char buf1[] = {255, 253, 34};
 char buf2[] = {255, 250, 34, 1, 0, 255, 240};
-char buf3[] = {255, 251, 1};
+char CLEAR_SIGN[]={0x1B,'c','\0'};
+
+
+char NEG[] = "\377\375\042\377\373\001";
+
+char *menu_chosen_a = "-->Opcja A\n   Opcja B\n   Koniec\n";
+char *menu_chosen_b = "   Opcja A\n-->Opcja B\n   Koniec\n";
+char *menu_chosen_end = "   Opcja A\n   Opcja B\n-->Koniec\n";
+
+char UP_ARROW[] = {27, 91, 65, '\0'};
+char DOWN_ARROW[] = {27, 91, 66, '\0'};
+
+char buffer[BUFFER_SIZE];
 
 bool is_number(char *arr) {
     int res = 1;
@@ -30,11 +42,6 @@ bool is_number(char *arr) {
 }
 
 int main(int argc, char *argv[]) {
-    char *menu = "-->Opcja A\n   Opcja B\n   Koniec\n";
-
-    int menu_size = strlen(menu);
-
-    char buffer[BUFFER_SIZE];
 
     if (argc != 2) {
         syserr("Wrong parameters number. Usage: %s port", argv[0]);
@@ -69,21 +76,39 @@ int main(int argc, char *argv[]) {
     socklen_t client_address_len;
     struct sockaddr_in client_address;
     int msg_sock;
+    int curr_option = 0;
 
     for (;;) {
         client_address_len = sizeof(client_address);
         msg_sock = accept(sock, (struct sockaddr *) &client_address, &client_address_len);
-        int n = send(msg_sock, buf1, 3, 0);
-        n = send(msg_sock, buf2, 7, 0);
-        n = send(msg_sock, buf3, 3, 0);
+        int n = send(msg_sock, NEG, strlen(NEG), 0);
+        // n = send(msg_sock, buf2, 7, 0);
 
         if (msg_sock < 0)
             syserr("Accept");
 
+        snd_len = write(msg_sock, menu_chosen_a, strlen(menu_chosen_a));
+
         do {
-            snd_len = write(msg_sock, menu, menu_size);
             len = read(msg_sock, buffer, sizeof(buffer));
-            write(1, buffer, len);
+            char xd[3];
+            strncpy(xd, buffer, 3);
+            printf("%d %d\n", strlen(UP_ARROW), strlen(DOWN_ARROW));
+            if (strcmp(xd, UP_ARROW) == 0) {
+                curr_option = curr_option == 0 ? 2 : curr_option - 1;
+            } else if (strcmp(xd, DOWN_ARROW) == 0) {
+                curr_option++;
+                curr_option = curr_option % 3;
+            }
+
+            n = send(msg_sock, CLEAR_SIGN, strlen(CLEAR_SIGN), 0);
+            if (curr_option == 0) {
+                snd_len = write(msg_sock, menu_chosen_a, strlen(menu_chosen_a));
+            } else if (curr_option == 1) {
+                snd_len = write(msg_sock, menu_chosen_b, strlen(menu_chosen_b));
+            } else {
+                snd_len = write(msg_sock, menu_chosen_end, strlen(menu_chosen_end));
+            }
         } while (len > 0);
         
         printf("ending connection\n");
