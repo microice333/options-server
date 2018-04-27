@@ -12,21 +12,38 @@
 
 #define BUFFER_SIZE   2000
 #define QUEUE_LENGTH     5
+#define MAIN_MENU        0
+#define B_MENU           1
 
-char negotiation[] = {IAC, DO, TELOPT_LINEMODE};
-char buf2[] = {IAC, SB, TELOPT_LINEMODE, TELOPT_ECHO, TELQUAL_SEND, 255, 240};
-// char NEG[] = {255, 251, 1};
-char NEG[] = {IAC, SB, TELOPT_DET, 8, IAC, SE};
-char NEG2[] ={IAC, SB, TELOPT_DET, 5, 1, 0, IAC, SE};
-char clear_terminal[] = "\e[1;1H\e[2J";
+//Negotiation options
+char LINEMODE[] = {255, 253, 34};
+char LINEMODE_SB[] = {255, 250, 34, 1, 0, 255, 240};
+char ECHO[] = {255, 251, 1};
+
+//Menu
 char CLEAR_SIGN[]={0x1B,'c','\0'};
+char FIRST_MENU[] = "Opcja A\r\nOpcja B\r\nKoniec\r\n";
+char SECOND_MENU[] = "Opcja B1\r\nOpcja B2\r\nWstecz\r\n";
+char CHOSEN_A[] = {0x1B,'[', '3', 'B','A', 0x1B,'[', '3', 'A', 0x1B,'[', 'D', 
+                   '\0'};
+char CHOSEN_B1[] = {0x1B,'[', '3', 'B', 'B', '1', 0x1B,'[', '3', 'A', 0x1B,'[', '2', 'D', 
+                   '\0'};
+char CHOSEN_B2[] = {0x1B,'[', '2', 'B', 'B', '2', 0x1B,'[', '2', 'A', 0x1B,'[', '2', 'D', 
+                   '\0'};
 
-char menu_chosen_a[] = "-->Opcja A\n   Opcja B\n   Koniec\n";
-char menu_chosen_b[] = "   Opcja A\n-->Opcja B\n   Koniec\n";
-char menu_chosen_end[] = "   Opcja A\n   Opcja B\n-->Koniec\n";
-
+//Keys to work with
 char UP_ARROW[] = {27, 91, 65};
 char DOWN_ARROW[] = {27, 91, 66};
+char ENTER[] = {13, 0};
+
+//Moving cursor
+// char MOVE_LEFT[] = {0x1B,'[', 'D','\0'};
+char MOVE_UP[] = {0x1B,'[', 'A','\0'};
+char MOVE_2_UP[] = {0x1B,'[', '2', 'A','\0'};
+char MOVE_3_UP[] = {0x1B,'[', '3', 'A','\0'};
+char MOVE_DOWN[] = {0x1B,'[', 'B','\0'};
+char MOVE_2_DOWN[] = {0x1B,'[', '2', 'B','\0'};
+char MOVE_3_DOWN[] = {0x1B,'[', '3', 'B','\0'};
 
 char buffer[BUFFER_SIZE];
 
@@ -52,8 +69,119 @@ bool is_down_arrow(ssize_t len) {
             && buffer[2] == DOWN_ARROW[2];
 }
 
-int main(int argc, char *argv[]) {
+bool is_enter(ssize_t len) {
+    return len == 2 && buffer[0] == ENTER[0] && buffer[1] == ENTER[1];
+}
 
+void check_write(ssize_t snd_len, ssize_t len) {
+    if (snd_len != len)
+        syserr("Partial / failed write");
+}
+
+void show_menu(int msg_sock) {
+    ssize_t snd_len;
+
+    snd_len = write(msg_sock, CLEAR_SIGN, sizeof(CLEAR_SIGN));
+    check_write(snd_len, sizeof(CLEAR_SIGN));
+
+    snd_len = write(msg_sock, FIRST_MENU, sizeof(FIRST_MENU));
+    check_write(snd_len, sizeof(FIRST_MENU));
+}
+
+void negotiate(int msg_sock) {
+    ssize_t snd_len;
+
+    snd_len = write(msg_sock, LINEMODE, sizeof(LINEMODE));
+    check_write(snd_len, sizeof(LINEMODE));
+    
+    snd_len = write(msg_sock, LINEMODE_SB, sizeof(LINEMODE_SB));
+    check_write(snd_len, sizeof(LINEMODE_SB));
+
+    snd_len = write(msg_sock, ECHO, sizeof(ECHO));
+    check_write(snd_len, sizeof(ECHO));
+}
+
+void set_cursor_on_begin(int msg_sock) {
+    ssize_t snd_len;
+    
+    snd_len = write(msg_sock, MOVE_3_UP, sizeof(MOVE_3_UP));
+    check_write(snd_len, sizeof(MOVE_3_UP));
+}
+
+void move_cursor_up(int msg_sock, int *curent_option) {
+    ssize_t snd_len;
+    
+    if (*curent_option == 0) {
+        snd_len = write(msg_sock, MOVE_2_DOWN, sizeof(MOVE_2_DOWN));
+        check_write(snd_len, sizeof(MOVE_2_DOWN));
+        (*curent_option) = 2;
+    } else {
+        snd_len = write(msg_sock, MOVE_UP, sizeof(MOVE_UP));
+        check_write(snd_len, sizeof(MOVE_UP));
+        (*curent_option)--;
+    }
+}
+
+void move_cursor_down(int msg_sock, int *current_option) {
+    ssize_t snd_len;
+    
+    if (*current_option == 2) {
+        snd_len = write(msg_sock, MOVE_2_UP, sizeof(MOVE_2_UP));
+        check_write(snd_len, sizeof(MOVE_2_UP));
+        (*current_option) = 0;
+    } else {
+        snd_len = write(msg_sock, MOVE_DOWN, sizeof(MOVE_DOWN));
+        check_write(snd_len, sizeof(MOVE_DOWN));
+        (*current_option)++;
+    }
+}
+
+bool decide(int msg_sock, int *current_option, int *current_menu) {
+    ssize_t snd_len;
+
+    if (*current_menu == MAIN_MENU) {
+        if (*current_option == 0) {
+            snd_len = write(msg_sock, CHOSEN_A, sizeof(CHOSEN_A));
+            check_write(snd_len, sizeof(CHOSEN_A));
+        } else if (*current_option == 1) {
+            snd_len = write(msg_sock, CLEAR_SIGN, sizeof(CLEAR_SIGN));
+            check_write(snd_len, sizeof(CLEAR_SIGN));
+
+            snd_len = write(msg_sock, SECOND_MENU, sizeof(SECOND_MENU));
+            check_write(snd_len, sizeof(SECOND_MENU));
+
+            set_cursor_on_begin(msg_sock);
+            
+            (*current_option) = 0;
+            (*current_menu) = B_MENU;
+        } else {
+            return true;
+        }
+    } else {
+        if (*current_option == 0) {
+            snd_len = write(msg_sock, CHOSEN_B1, sizeof(CHOSEN_B1));
+            check_write(snd_len, sizeof(CHOSEN_B1));
+        } else if (*current_option == 1) {
+            snd_len = write(msg_sock, CHOSEN_B2, sizeof(CHOSEN_B2));
+            check_write(snd_len, sizeof(CHOSEN_B2));           
+        } else {
+            snd_len = write(msg_sock, CLEAR_SIGN, sizeof(CLEAR_SIGN));
+            check_write(snd_len, sizeof(CLEAR_SIGN));
+
+            snd_len = write(msg_sock, FIRST_MENU, sizeof(FIRST_MENU));
+            check_write(snd_len, sizeof(FIRST_MENU));
+
+            set_cursor_on_begin(msg_sock);
+            
+            (*current_option) = 0;
+            (*current_menu) = MAIN_MENU;
+        } 
+    }
+
+    return false;
+}
+
+int main(int argc, char *argv[]) {
     if (argc != 2) {
         syserr("Wrong parameters number. Usage: %s port", argv[0]);
     }
@@ -83,7 +211,7 @@ int main(int argc, char *argv[]) {
     if (listen(sock, QUEUE_LENGTH) < 0)
         syserr("Listen");
 
-    ssize_t len, snd_len;
+    ssize_t len;
     socklen_t client_address_len;
     struct sockaddr_in client_address;
     int msg_sock;
@@ -95,39 +223,29 @@ int main(int argc, char *argv[]) {
         if (msg_sock < 0)
             syserr("Accept");
 
-        int curr_option = 0;
-        snd_len = write(msg_sock, negotiation, sizeof(negotiation));
-        // snd_len = write(msg_sock, menu_chosen_a, sizeof(menu_chosen_a));
+        int curr_option = 0, curr_menu = 0;
+        bool closed = false;
+
+        negotiate(msg_sock);
+        show_menu(msg_sock);
+        set_cursor_on_begin(msg_sock);  
 
         do {
-            snd_len = write(msg_sock, clear_terminal, sizeof(clear_terminal));
-
-            if (curr_option == 0) {
-                snd_len = write(msg_sock, menu_chosen_a, sizeof(menu_chosen_a));
-            } else if (curr_option == 1) {
-                snd_len = write(msg_sock, menu_chosen_b, sizeof(menu_chosen_b));
-            } else {
-                snd_len = write(msg_sock, menu_chosen_end, sizeof(menu_chosen_end));
-            }
-
             len = read(msg_sock, buffer, sizeof(buffer));
-            // write(1, "du[a", 4);
-            // if (len < 0)
-                // syserr("Reading from client socker");
 
-            // printf("%d %d %d %d\n", len, sizeof(UP_ARROW), strlen(UP_ARROW), sizeof(DOWN_ARROW));
-            // // char xd[3];
-            // // strncpy(xd, buffer, 3);
+            if (len < 0)
+                syserr("Reading from client socker");
 
             if (is_up_arrow(len)) {
-                curr_option = curr_option == 0 ? 2 : curr_option - 1;
+                move_cursor_up(msg_sock, &curr_option);
             } else if (is_down_arrow(len)) {
-                curr_option++;
-                curr_option = curr_option % 3;
+                move_cursor_down(msg_sock, &curr_option);
+            } else if (is_enter(len)) {
+                closed = decide(msg_sock, &curr_option, &curr_menu);
             }
-        } while (len > 0);
+        } while (len > 0 && !closed);
         
-        printf("ending connection\n");
+        printf("Ending connection\n");
         
         if (close(msg_sock) < 0)
             syserr("Close");
